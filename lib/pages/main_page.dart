@@ -1,13 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/background_service.dart';
 import '../widgets/floating_button.dart';
 import 'package:camera/camera.dart';
 import 'camera_screen.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:google_ml_kit/google_ml_kit.dart';
+import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 class MainPage extends StatefulWidget {
@@ -23,7 +22,8 @@ class _MainPageState extends State<MainPage> {
   bool _isListening = false;
   String _command = "";
   CameraController? _cameraController;
-  final FlutterTts _flutterTts = FlutterTts();  // Initialize Text-to-Speech
+  final FlutterTts _flutterTts = FlutterTts();
+  String _recognizedText = "";  // Holds recognized text
 
   @override
   void initState() {
@@ -36,11 +36,31 @@ class _MainPageState extends State<MainPage> {
   void dispose() {
     _backgroundService.stopBackgroundService();
     _cameraController?.dispose();
-    _flutterTts.stop();  // Stop TTS if active
+    _flutterTts.stop();
     super.dispose();
   }
+// Function to process voice commands
+  void _processCommand(String command) {
+    command = command.toLowerCase();
 
-  // Function to start listening to voice commands
+    if (command.contains('open camera')) {
+      setState(() => _isCameraEnabled = true);
+      _openCamera();  // Open the camera when the user says "open camera"
+    } else if (command.contains('voice recognition off')) {
+      setState(() => _isVoiceEnabled = false);
+      _stopListening();  // Turn off voice recognition when the user says "voice recognition off"
+    } else if (command.contains('voice recognition on')) {
+      setState(() => _isVoiceEnabled = true);
+      _startListening();  // Turn on voice recognition when the user says "voice recognition on"
+    } else if (command.contains('copy text')) {
+      _captureImageAndExtractText();  // Extract text when the user says "copy text"
+    } else {
+      setState(() {
+        _recognizedText = "Unknown command: $command";
+      });
+    }
+  }
+  // Method to start voice recognition
   void _startListening() async {
     bool available = await _speechToText.initialize();
     if (available) {
@@ -48,34 +68,20 @@ class _MainPageState extends State<MainPage> {
       _speechToText.listen(onResult: (val) {
         setState(() {
           _command = val.recognizedWords;
+          _recognizedText = val.recognizedWords;  // Update recognized text
           _processCommand(_command);
         });
       });
     }
   }
 
-  // Function to stop listening
+  // Method to stop voice recognition
   void _stopListening() {
     setState(() => _isListening = false);
     _speechToText.stop();
   }
 
-  // Function to process the voice command
-  void _processCommand(String command) {
-    command = command.toLowerCase();
-    if (command.contains('open camera')) {
-      setState(() => _isCameraEnabled = true);
-      _openCamera();
-    } else if (command.contains('voice recognition off')) {
-      setState(() => _isVoiceEnabled = false);
-    } else if (command.contains('voice recognition on')) {
-      setState(() => _isVoiceEnabled = true);
-    } else if (command.contains('copy text')) {
-      _captureImageAndExtractText();
-    }
-  }
-
-  // Function to open the camera
+  // Method to open the camera
   void _openCamera() async {
     final cameras = await availableCameras();
     final firstCamera = cameras.first;
@@ -94,20 +100,18 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  // Function to capture image and extract text
+  // Function to capture image and extract text using ML Kit
   void _captureImageAndExtractText() async {
     if (_cameraController != null) {
       final Directory extDir = await getApplicationDocumentsDirectory();
       final String dirPath = '${extDir.path}/Pictures/flutter_test';
       await Directory(dirPath).create(recursive: true);
-      final String filePath = '$dirPath/${DateTime.now().millisecondsSinceEpoch}.jpg';
-
-
       final XFile picture = await _cameraController!.takePicture();
-      await picture.saveTo(filePath);
+      final String filePath = picture.path;
 
       final image = InputImage.fromFilePath(filePath);
 
+      // Initialize text recognizer
       final textRecognizer = GoogleMlKit.vision.textRecognizer();
       final RecognizedText recognizedText = await textRecognizer.processImage(image);
 
@@ -120,17 +124,13 @@ class _MainPageState extends State<MainPage> {
 
       textRecognizer.close();
 
-      // Speak the extracted text using TTS
-      _speak(extractedText);
+      // Display the extracted text in the UI or process it
+      setState(() {
+        _recognizedText = extractedText;
+      });
 
-      // Show dialog with extracted text
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Extracted Text'),
-          content: Text(extractedText),
-        ),
-      );
+      // Optionally, use TTS to read the extracted text
+      _speak(_recognizedText);
     }
   }
 
@@ -149,26 +149,31 @@ class _MainPageState extends State<MainPage> {
       ),
       body: Stack(
         children: [
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'AI is running in the background...',
-                  style: TextStyle(fontSize: 18),
-                ),
-                SizedBox(height: 20),
-                Text(
-                  _isListening ? 'Listening for commands...' : 'Tap to start listening',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
-                ),
-                SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: _isListening ? _stopListening : _startListening,
-                  child: Text(_isListening ? 'Stop Listening' : 'Start Listening'),
-                ),
-              ],
-            ),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'AI is running in the background...',
+                style: TextStyle(fontSize: 18),
+              ),
+              SizedBox(height: 20),
+              Text(
+                _isListening ? 'Listening for commands...' : 'Tap to start listening',
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+              SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _isListening ? _stopListening : _startListening,
+                child: Text(_isListening ? 'Stop Listening' : 'Start Listening'),
+              ),
+              SizedBox(height: 20),
+              // Add the recognized text section
+              Text(
+                _recognizedText.isNotEmpty ? _recognizedText : 'No speech detected yet',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
           FloatingButton(
             onPressed: () {
